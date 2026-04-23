@@ -1,71 +1,180 @@
-# 🎓 Notificador de Catedráticos ULSA - Documentación del Proyecto
+# 🎓 Notificador de Catedráticos ULSA - Documentación Técnica Avanzada
 
-Este documento consolida la arquitectura, el funcionamiento y el desarrollo técnico del **Notificador de Catedráticos IoT**, diseñado para resolver la comunicación asíncrona entre estudiantes y profesores en los cubículos de la universidad.
-
----
-
-## 1. 🎯 Objetivo del Proyecto
-Optimizar el tiempo de los estudiantes y catedráticos al eliminar la incertidumbre de buscar a un profesor en su cubículo. El sistema permite al estudiante solicitar atención desde una aplicación web y al maestro ser notificado mediante una alerta por voz, dándole la oportunidad de responder físicamente si está disponible, ocupado o en camino.
+Este documento consolida a nivel de ingeniería la arquitectura, el funcionamiento algorítmico y el código fuente del **Notificador de Catedráticos IoT**. Diseñado para la automatización de la comunicación en cubículos universitarios.
 
 ---
 
-## 2. 🔌 Componentes de Hardware (Físico)
-El cerebro físico del sistema está construido en torno a microcontroladores y sensores económicos pero potentes:
+## 1. 🎯 Topología y Arquitectura del Sistema
 
-*   **ESP32 DevKit V1:** El microcontrolador central. Cuenta con un módulo Wi-Fi integrado que le permite mantenerse conectado a internet permanentemente para escuchar los eventos de la base de datos.
-*   **Módulo DFPlayer Mini V3.0:** Un reproductor MP3 de hardware que lee archivos de audio desde una tarjeta MicroSD. Recibe comandos por puerto Serial (UART) desde el ESP32 para reproducir el nombre específico del maestro solicitado.
-*   **Sensor PIR (Movimiento):** Detecta calor corporal en el área del cubículo. Permite que el sistema sepa en tiempo real si hay "movimiento en la sala", reflejándolo en la página web.
-*   **Botones Físicos de Respuesta:**
-    *   🟢 **Botón Verde:** Envía la señal *"Voy en camino / Espérame"*.
-    *   🔴 **Botón Rojo:** Envía la señal *"Estoy ocupado"*.
-*   **Altavoz / Bocina:** Conectada al DFPlayer para amplificar los audios de los nombres de los profesores.
+El proyecto opera bajo un modelo **Cliente-Servidor-Hardware (IoT)** impulsado por eventos (Event-Driven). 
+
+*   **Cliente (Frontend):** Aplicación Web React consumida por estudiantes y maestros.
+*   **Servidor (Backend):** Google Firebase Realtime Database (Base de datos NoSQL basada en WebSockets).
+*   **Hardware (Edge/IoT):** Placa ESP32 programada en C++ (PlatformIO) manejando interrupciones físicas y reproducción de audio.
 
 ---
 
-## 3. 🌐 Arquitectura Backend (Firebase)
-El sistema utiliza **Google Firebase** como infraestructura "Serverless" en la nube, garantizando tiempos de respuesta de milisegundos.
+## 2. 💻 Frontend: Lógica Web (React)
 
-*   **Firebase Realtime Database:** Una base de datos NoSQL alojada en la nube que sincroniza datos en tiempo real. 
-    *   **Gestión de Colas (`/colas`):** En lugar de sobreescribir variables simples, el sistema utiliza un algoritmo de encolado (`ll_1`, `ll_2`, etc.). Esto garantiza que si 5 alumnos llaman a distintos maestros al mismo tiempo, las alertas de voz no se empalmen, sino que suenen una por una ordenadamente.
-    *   **Directorio (`/maestros`):** Almacena la información de los catedráticos, incluyendo si están "disponibles" o "no disponibles" y su motivo (ej. "En laboratorio").
-*   **Reglas de Seguridad:** La base de datos cuenta con reglas estrictas de seguridad (Firebase Rules) que impiden accesos no autorizados a ciertas ramas sensitivas.
+El frontend no es solo una interfaz; tiene reglas estrictas de negocio para el control de la concurrencia y la prevención de spam.
+
+### 2.1. Bloqueo Anti-Spam por Dispositivo (`App.jsx`)
+Para evitar que un estudiante "juegue" con el sistema haciendo múltiples peticiones, la App ancla el dispositivo a la llamada en curso usando memoria persistente.
+
+**Fragmento Clave (Manejo del candado y auto-liberación):**
+```javascript
+// App.jsx - useEffect de auto-liberación
+useEffect(() => {
+  let timer;
+  if (activeQueueId && colas) {
+    const miLlamada = colas[`ll_${activeQueueId}`];
+    
+    // Si la llamada sigue existiendo pero ya fue respondida por el hardware
+    if (miLlamada && (miLlamada.estado === 'voy_en_camino' || miLlamada.estado === 'ocupado' || miLlamada.estado === 'timeout')) {
+      
+      // Mantiene el color verde/rojo en pantalla por 6 segundos para que el alumno lo lea
+      timer = setTimeout(() => {
+        handleReleaseCall(); // Elimina el bloqueo local y físicamente borra el nodo de Firebase
+      }, 6000);
+      
+    } else if (Object.keys(colas).length > 0 && !miLlamada) {
+      // Seguridad: Si la llamada fue borrada misteriosamente (o por un admin), liberar dispositivo.
+      handleReleaseCall();
+    }
+  }
+  return () => clearTimeout(timer);
+}, [activeQueueId, colas, handleReleaseCall]);
+```
+
+### 2.2. Algoritmo Analizador de Fila (`CallPanel.jsx`)
+Para mostrarle al estudiante cuántas personas hay delante de él en tiempo real, el sistema debe ignorar matemáticamente los turnos cancelados que quedaron atrás o en huecos.
+
+**Fragmento Clave (Reductor de turnos activos):**
+```javascript
+// CallPanel.jsx
+const turnosPorDelante = Object.keys(colas || {}).reduce((count, key) => {
+  const id = parseInt(key.replace('ll_', ''), 10);
+  
+  // Cuenta estrictamente tickets entre lo que atiende el ESP32 actualmente y mi propio Ticket
+  if (!isNaN(id) && id >= turno_esp32 && id < queueId) {
+    const state = colas[key]?.estado;
+    // Solo toma en cuenta llamadas legítimamente en espera o sonando
+    if (state === 'pendiente' || state === 'notificando') {
+      return count + 1;
+    }
+  }
+  return count;
+}, 0);
+```
+
+### 2.3. Transacciones Atómicas en Firebase (`useFirebase.js`)
+Para crear un nuevo ticket, no usamos un simple "escribir y sumar 1", ya que si dos estudiantes presionan al mismo tiempo habría una colisión (Race Condition). Se usa `runTransaction`.
+
+```javascript
+// useFirebase.js
+const colaCountRef = ref(db, 'sistema/cola_ultimo_id');
+// Transaction asegura que la suma sea atómica en los servidores de Google
+const result = await runTransaction(colaCountRef, (currentData) => {
+  return (currentData || 0) + 1;
+});
+if (result.committed) {
+    const nuevoId = result.snapshot.val();
+    // Se inserta en /colas/ll_[nuevoId]
+}
+```
 
 ---
 
-## 4. 💻 Frontend (Aplicación Web)
-La cara visible del proyecto para los alumnos y maestros.
+## 3. ⚙️ Firmware IoT: Lógica en Placa (C++ ESP32)
 
-*   **Tecnologías:** Construida con **React**, **Vite** y estilizada con **Tailwind CSS** para una interfaz moderna, ultra rápida y completamente responsiva (adaptable a celulares y computadoras).
-*   **Interfaz de Estudiantes:** 
-    *   Muestra tarjetas dinámicas de cada profesor con gradientes de color según su estado en vivo.
-    *   Sistema de Prevención de Spam: Al realizar una llamada, el navegador guarda un candado local (`localStorage`) que bloquea el dispositivo del alumno en una ventana de "espera", impidiéndole hacer llamadas infinitas y saturar el sistema.
-*   **Panel Secreto para Maestros:**
-    *   Un panel protegido por PIN al que solo los profesores pueden acceder.
-    *   Permite al maestro ver una lista en vivo de **quién lo está llamando** (Nombre y Carrera del alumno) y cambiar su estado general a *"Fuera de oficina"*, *"En junta"*, etc.
+La placa debe ser resistente a fallos de red, cancelaciones abruptas de usuarios, y debe procesar los audios sin que se empalmen.
+
+### 3.1. Streams vs HTTP Polling
+En lugar de preguntar "habrá datos?" cada segundo (lo cual saturaría el procesador), el ESP32 abre un canal TCP directo a Firebase. La función `streamCallback` se dispara asíncronamente en el microsegundo que llega un dato.
+
+```cpp
+// main.cpp - Callback Asíncrono
+void streamCallback(FirebaseStream data) {
+  int idStream = data.dataType() == "double" ? (int)data.doubleData() : data.intData();
+  // Al llegar un nuevo ID, actualizamos nuestra variable límite.
+  if (idStream > ultimoIdRegistrado) {
+     ultimoIdRegistrado = idStream;
+  }
+}
+```
+
+### 3.2. Orquestador de Turnos y Detección de "Fantasmas" (`comprobarCola()`)
+Si un alumno genera un ticket, pero antes de que la placa lo procese decide Cancelarlo, el estudiante borra físicamente el nodo en la base de datos (con `remove()`). El ESP32 detecta inteligentemente que el ticket se volvió "null".
+
+**Fragmento Clave:**
+```cpp
+// main.cpp - Dentro de comprobarCola()
+String rutaEstado = "/colas/ll_" + String(idTurnoActual) + "/estado";
+
+if (Firebase.RTDB.getString(&fbdo, rutaEstado.c_str())) {
+  if (fbdo.dataType() == "null") {
+    // El nodo fue eliminado de la DB antes de que lo atendiéramos
+    Serial.printf("[Queue] Turno #%d fue ELIMINADO. Avanzando...\n", idTurnoActual);
+    idTurnoActual++; 
+    Firebase.RTDB.setInt(&fbdo, "/sistema/turno_esp32", idTurnoActual);
+  } else {
+    // Si existe, y es "pendiente", leemos la pista de audio e iniciamos el DFPlayer
+  }
+} else {
+  // Manejo de Error: Si lanza "path not exist" es porque no hay nada escrito aún
+  if (fbdo.errorReason().indexOf("path not exist") != -1) {
+    idTurnoActual++; // Brinca el fantasma
+  }
+}
+```
+
+### 3.3. Watcher de Aborto en Tiempo Real (`loop()`)
+¿Qué pasa si el estudiante cancela **mientras** el audio se está reproduciendo en la bocina? La placa debe frenar el audio instantáneamente.
+
+**Fragmento Clave:**
+```cpp
+// main.cpp - Watcher en el loop()
+if (llamadaActiva && Firebase.ready()) {
+  static unsigned long ultimoCheckCancelacion = 0;
+  // Encuestamos el ticket actual cada 2000 milisegundos
+  if (millis() - ultimoCheckCancelacion > 2000) {
+    ultimoCheckCancelacion = millis();
+    bool cancelado = false;
+    
+    // Si la lectura da null o "path not exist", significa que el alumno eliminó la llamada.
+    if (Firebase.RTDB.getString(&fbdo, rutaEstado.c_str())) {
+      if (fbdo.dataType() == "null") cancelado = true;
+    } else {
+      if (fbdo.errorReason().indexOf("path not exist") != -1) cancelado = true;
+    }
+
+    if (cancelado) {
+      Serial.printf("Turno #%d cancelado. Abortando audio...\n", idTurnoActual);
+      myDFPlayer.stop();      // 1. SILENCIA LA BOCINA AL INSTANTE
+      llamadaActiva = false;  // 2. LIBERA EL ESTADO DEL ESP32
+      idTurnoActual++;        // 3. AVANZA AL SIGUIENTE ESTUDIANTE
+    }
+  }
+}
+```
 
 ---
 
-## 5. ⚙️ Firmware de la Placa (Código ESP32 en C++)
-El programa interno de la placa fue escrito en **C++** utilizando PlatformIO. Su diseño es altamente robusto y multitarea:
+## 4. 🧠 Preguntas Difíciles del Jurado (Q&A Defensa)
 
-*   **Manejo de Streams (Event-driven):** El ESP32 no pregunta repetitivamente a la base de datos "habrá llamadas?". En su lugar, mantiene una conexión abierta (Stream). Firebase empuja la información a la placa instantáneamente en cuanto un alumno presiona "Llamar".
-*   **Orquestador de Cola (`Queue Orchestrator`):** La placa mantiene un puntero interno (`turno_esp32`). Si llegan múltiples llamadas, la placa las reproduce en orden perfecto.
-*   **Cancelación en Tiempo Real (Polling Watcher):** Si el alumno se desespera y presiona "Cancelar solicitud" en la página web, el ESP32 (que revisa el estado cada 2 segundos) detecta la desaparición del ticket en Firebase y **aborta el audio al instante**, pasando a la siguiente persona.
-*   **Manejo de Timeouts:** Si un maestro no responde físicamente a los botones después de 45 segundos, el ESP32 marca la llamada como "Expirada/Timeout" para no dejar al alumno congelado esperando.
+Aquí tienes una batería de preguntas trampa o complejas que un jurado técnico podría hacerte, junto con sus respuestas sólidas.
 
----
+### 🚩 Pregunta 1: ¿Qué pasa si dos alumnos desde dos celulares diferentes presionan el botón "Llamar" exactamente al mismo milisegundo? ¿Se traba o se empalman los audios?
+**Respuesta:** "No hay ningún problema, porque el backend utiliza `runTransaction` de Firebase. Una transacción funciona como un embudo matemático a nivel servidor; Firebase pone temporalmente en pausa a un celular por fracciones de segundo mientras le otorga el ID al primero, y luego le da el ID + 1 al segundo. Los audios nunca se empalman porque el firmware del ESP32 está diseñado como un **Orquestador en Serie (Queue)**. El microcontrolador solo procesa la llamada `idTurnoActual` y no atiende la siguiente hasta que la actual termina o es cancelada."
 
-## 🔄 Flujo Completo del Sistema (Diagrama Lógico)
+### 🚩 Pregunta 2: ¿Qué sucede si el internet de la universidad falla o el ESP32 se desconecta del Wi-Fi temporalmente mientras hay gente en la fila?
+**Respuesta:** "El sistema es tolerante a fallos. Si el ESP32 pierde conexión, su código en la función `loop()` tiene un mecanismo de auto-reconexión `WIFI_RECONNECT_MS` que intenta reconectarse automáticamente. Durante esa caída, los alumnos pueden seguir pidiendo llamadas porque la página web se comunica directo a los servidores de Google. Cuando el ESP32 recupera el internet, simplemente reanuda leyendo su puntero `turno_esp32` desde donde se quedó, y atiende rápidamente las llamadas que se acumularon."
 
-1. **Solicitud:** El alumno "Eddy (ICE)" presiona *Llamar* al Profe X en la Web.
-2. **Nube:** La Web inscribe un ticket (ej. `ll_24`) en Firebase con el estado *"pendiente"*.
-3. **Notificación:** El ESP32 recibe el aviso al instante. Lee que es el audio pista #4.
-4. **Hardware en Acción:** El ESP32 le ordena al DFPlayer reproducir la pista 4. En paralelo, Firebase cambia a *"notificando"*.
-5. **Decisión del Maestro:** El maestro escucha la alerta y presiona el Botón Verde.
-6. **Respuesta:** El ESP32 envía a Firebase el estado *"voy_en_camino"*.
-7. **Resolución:** La Web detecta el cambio, le muestra una pantalla verde de éxito a Eddy, y tras 6 segundos, limpia la base de datos automáticamente liberando su dispositivo.
+### 🚩 Pregunta 3: ¿Por qué usaron Firebase Realtime Database (Sockets) en lugar de una API REST tradicional (HTTP Requests)?
+**Respuesta:** "La arquitectura REST tradicional requiere hacer *Polling*, es decir, forzar al microcontrolador a preguntarle al servidor '¿Hay llamadas nuevas?' cada segundo. Eso sobrecarga el procesador del ESP32, agota el ancho de banda y tiene latencia. Nosotros usamos Firebase RTDB porque usa WebSockets (un canal bidireccional abierto). El servidor 'empuja' la información al ESP32 asíncronamente en el instante exacto en que ocurre. Esto reduce la carga a casi 0% de CPU inactivo y nos da latencias de respuesta de milisegundos."
 
----
+### 🚩 Pregunta 4: Imagina que un estudiante malicioso usa un programa para hacer mil solicitudes de llamada falsas. ¿Saturaría la base de datos o colapsaría la memoria de su nube?
+**Respuesta:** "Tenemos dos defensas contra eso. Primero, el Frontend implementa un candado local que amarra tu dispositivo y no te permite salir de la pantalla de 'Llamada Pendiente' hasta que termine el ciclo. Segundo, incluso si logra evadirlo o decide simplemente 'Llamar y Cancelar' repetidamente, el sistema no acumula basura en la nube. Hemos implementado un proceso de *Limpieza Dinámica* donde usamos el comando físico `remove()` en Firebase en lugar de simplemente cambiar estados. Toda llamada cancelada, o toda llamada contestada, se desintegra de la base de datos de inmediato, por lo que nunca saturamos el almacenamiento de la nube ni cobramos de más."
 
-> **Nota para el Jurado:**
-> *Este sistema no solo resuelve un problema logístico físico mediante hardware, sino que implementa conceptos avanzados de software moderno: algoritmos de colas, gestión de concurrencia, bases de datos reactivas en tiempo real y componentes de UI controlados por estado.*
+### 🚩 Pregunta 5: ¿Y si el profesor no se encuentra y nunca llega a presionar el botón de que está ocupado o en camino? ¿La bocina sonaría infinitamente trabando la fila?
+**Respuesta:** "Para eso desarrollamos un Watchdog (Perro Guardián) de tiempo en el código del ESP32 (`TIMEOUT_LLAMADA_MS`). Cada vez que inicia un audio, el microcontrolador inicia un temporizador. Si transcurren exactamente 45 segundos y ningún botón físico ha sido presionado, el ESP32 asume la ausencia del profesor, aborta la alerta, escribe automáticamente el estado 'timeout' para que el celular del estudiante sepa que nadie contestó, y avanza la fila para permitir que otros pasen."
