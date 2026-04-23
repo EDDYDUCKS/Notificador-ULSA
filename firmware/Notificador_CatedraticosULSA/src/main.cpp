@@ -75,6 +75,7 @@ bool estadoAnteriorRojo  = HIGH;
 // Sensor PIR
 bool pirEstadoAnterior = false;
 unsigned long ultimoCheckPIR = 0;
+unsigned long ultimoMovimientoPIR = 0;
 unsigned long ultimoReconnectWiFi = 0;
 
 // Ignorar valores de arranque del stream
@@ -174,10 +175,19 @@ void loop() {
   // 3. Revisar si hay llamados pendientes y no estamos ocupados reproduciendo
   comprobarCola();
 
-  // 4. Timer de expiración de llamada (Time out)
+  // 4. Timer de expiración de llamada (Time out global de 45s)
   if (llamadaActiva && (millis() - tiempoInicioLlamada > TIMEOUT_LLAMADA_MS)) {
     Serial.println("[Queue] ¡TIEMPO DE ESPERA AGOTADO! El maestro no respondió.");
     terminarLlamadaActual("timeout");
+  }
+
+  // 4.1. Timer de expiración inteligente por PIR (Ausencia del maestro 15s)
+  if (llamadaActiva && (millis() - ultimoMovimientoPIR > 15000)) {
+    // Exigimos que la llamada lleve al menos 15s activa antes de rechazarla para darle oportunidad al maestro.
+    if (millis() - tiempoInicioLlamada >= 15000) {
+      Serial.println("[Queue] ¡PIR AUTO-REJECT! No hay nadie en el cubículo (15s sin movimiento).");
+      terminarLlamadaActual("timeout");
+    }
   }
 
   // 4.5. Detectar si el estudiante canceló la llamada a la mitad
@@ -319,6 +329,7 @@ void comprobarCola() {
           
           llamadaActiva = true;
           tiempoInicioLlamada = millis();
+          ultimoMovimientoPIR = millis(); // Dar 15s de gracia al iniciar la llamada
           enviarFirebaseString(rutaEstado.c_str(), "notificando");
           
           // Extraer audio
@@ -437,6 +448,10 @@ void procesarPIR() {
   ultimoCheckPIR = ahora;
 
   bool pirActual = digitalRead(PIN_PIR) == HIGH;
+
+  if (pirActual) {
+    ultimoMovimientoPIR = millis();
+  }
 
   // Solo enviar si el estado cambió
   if (pirActual != pirEstadoAnterior) {
