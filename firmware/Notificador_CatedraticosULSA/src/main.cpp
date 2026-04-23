@@ -181,11 +181,11 @@ void loop() {
     terminarLlamadaActual("timeout");
   }
 
-  // 4.1. Timer de expiración inteligente por PIR (Ausencia del maestro 15s)
-  if (llamadaActiva && (millis() - ultimoMovimientoPIR > 15000)) {
-    // Exigimos que la llamada lleve al menos 15s activa antes de rechazarla para darle oportunidad al maestro.
-    if (millis() - tiempoInicioLlamada >= 15000) {
-      Serial.println("[Queue] ¡PIR AUTO-REJECT! No hay nadie en el cubículo (15s sin movimiento).");
+  // 4.1. Timer de expiración inteligente por PIR (Ausencia del maestro 25s)
+  if (llamadaActiva && (millis() - ultimoMovimientoPIR > 25000)) {
+    // Exigimos que la llamada lleve al menos 25s activa antes de rechazarla para darle oportunidad al maestro.
+    if (millis() - tiempoInicioLlamada >= 25000) {
+      Serial.println("[Queue] ¡PIR AUTO-REJECT! No hay nadie en el cubículo (25s sin movimiento).");
       terminarLlamadaActual("timeout");
     }
   }
@@ -329,7 +329,7 @@ void comprobarCola() {
           
           llamadaActiva = true;
           tiempoInicioLlamada = millis();
-          ultimoMovimientoPIR = millis(); // Dar 15s de gracia al iniciar la llamada
+          ultimoMovimientoPIR = millis(); // Dar 25s de gracia al iniciar la llamada
           enviarFirebaseString(rutaEstado.c_str(), "notificando");
           
           // Extraer audio
