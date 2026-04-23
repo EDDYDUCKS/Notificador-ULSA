@@ -1,0 +1,22 @@
+{
+  "rules": {
+    ".read": true,
+    
+    "maestros": {
+      ".write": true,
+      
+      "$maestro_id": {
+        ".write": true,
+        ".validate": "newData.hasChildren(['nombre', 'estado']) || !newData.exists()"
+      }
+    },
+    
+    "sistema": {
+      ".write": true
+    },
+    
+    "colas": {
+      ".write": true
+    }
+  }
+}

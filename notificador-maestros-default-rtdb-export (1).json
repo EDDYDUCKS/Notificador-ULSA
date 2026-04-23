@@ -1,0 +1,114 @@
+{
+  "maestros": {
+    "maestro_aaron": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Aarón Emilio Cisneros Quintana",
+      "pista_audio": 9
+    },
+    "maestro_anioska": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "MSc. Anioska Josefina Alemán Chávez",
+      "pista_audio": 10
+    },
+    "maestro_ashley": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Ashley Madiel Salaverri Lainez",
+      "pista_audio": 15
+    },
+    "maestro_briana": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Briana Lilliam Salmeron Chevez",
+      "pista_audio": 88
+    },
+    "maestro_freddy_g": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Freddy Guillermo Chavarría Gutiérrez",
+      "pista_audio": 13
+    },
+    "maestro_freddy_m": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Freddy Alexander Mejia Quintana",
+      "pista_audio": 16
+    },
+    "maestro_herson": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Herson Eduardo Guzmán Castillo",
+      "pista_audio": 12
+    },
+    "maestro_ivania": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Dra. Ivania del Socorro Espinoza Sandoval",
+      "pista_audio": 17
+    },
+    "maestro_jose_abraham": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Lic. José Abraham Miranda Chávez",
+      "pista_audio": 4
+    },
+    "maestro_julissa": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Lic. Julissa Cristina Mendoza Sánchez",
+      "pista_audio": 2
+    },
+    "maestro_kevin": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Kevin Josue Flores Carvajal",
+      "pista_audio": 3
+    },
+    "maestro_luis_isaac": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Luis Isaac Herrera Velásquez",
+      "pista_audio": 1
+    },
+    "maestro_luisa": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Lic. Luisa Emilia Garcia Moreira",
+      "pista_audio": 7
+    },
+    "maestro_maria": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Maria Martha Verónica Lacayo Trujillo",
+      "pista_audio": 14
+    },
+    "maestro_melvin": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Ing. Melvin Antonio Morales Rojas",
+      "pista_audio": 11
+    },
+    "maestro_pedro": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "Lic. Pedro Pablo López Muñoz",
+      "pista_audio": 89
+    },
+    "maestro_wilhelm": {
+      "departamento": "Docente",
+      "estado": "disponible",
+      "nombre": "MSc. Wilhelm Jesús Rojas Baca",
+      "pista_audio": 3
+    }
+  },
+  "sistema": {
+    "llamada_activa": false,
+    "maestro_solicitado": "",
+    "movimiento_sala": false,
+    "pista_solicitada": 0,
+    "respuesta_hardware": "en_espera",
+    "timestamp": 0
+  }
+}
